@@ -1,0 +1,121 @@
+using ArgParse
+using NetCDF
+include("const.jl")
+include("Initialize.jl")
+using .Initialize: init, Model, Grid
+include("Timestep.jl")
+using .Timestep: perform_timestep!
+using ProgressMeter
+
+function parse_commandline()
+    s = ArgParseSettings()
+
+    @add_arg_table s begin
+        "--nx_glob"
+        help = "Total number of cells in the x-direction"
+        arg_type = Int
+        default = 100
+        "--nz_glob"
+        help = "Total number of cells in the z-direction"
+        arg_type = Int
+        default = 50
+        "--sim_time"
+        help = "How many seconds to run the simulation"
+        arg_type = Int
+        default = 50
+        "--output_freq"
+        help = "How frequently to output data to file (in seconds)"
+        arg_type = Int
+        default = 10
+        "--data_spec_int"
+        help = "How to initialize the data"
+        default = Int(DATA_SPEC_THERMAL)
+    end
+
+    return parse_args(s)
+end
+
+
+
+
+function main()
+
+    if !isinteractive()
+        config = parse_commandline()
+    else
+        config = Dict(
+            "nx_glob" => 100,
+            "nz_glob" => 50,
+            "sim_time" => 50,
+            "output_freq" => 10,
+            "data_spec_int" => Int(DATA_SPEC_THERMAL),
+        )
+    end
+
+    println("Parsed args:")
+    for (arg, val) in config
+        println("  $arg  =>  $val")
+    end
+
+    model, grid = init(config)
+    #init(config);
+    #println(model)
+
+    mass0, te0 = reductions(model, grid)
+    println("mass = $mass0, te = $te0")
+
+    etime = 0.0
+    #output(model, etime)
+
+    #=
+    anim_dens = Animation()
+    anim_uwnd = Animation()
+    anim_wwnd = Animation()
+    anim_theta = Animation()
+    anim = [anim_dens, anim_uwnd, anim_wwnd, anim_theta]
+    #output_gif!(model, etime, grid, anim);
+    =#
+    output_freq = config["output_freq"]
+    sim_time = config["sim_time"]
+
+    nsnaps = floor(Int, sim_time/output_freq) + 1
+    snapshots = Array{Float64}(undef, 4, grid.nx, grid.nz, nsnaps)
+    etimes = Vector{Float64}(undef, nsnaps)
+
+    # output initial state
+    snapshots[:,:,:,1] = createSnapshot(model, grid)
+
+
+    direction_switch = true
+    output_counter = 0.0
+    counter = 1
+    @showprogress for i in 1:grid.nt
+    #while etime < sim_time
+
+        if output_counter >= output_freq
+            counter += 1
+            output_counter = output_counter - output_freq
+            #println(counter, "  ", etime)
+            snapshots[:,:,:,counter] = createSnapshot(model, grid)
+            etimes[counter] = etime
+        end
+
+        perform_timestep!(model, grid, direction_switch)
+        direction_switch = !direction_switch
+        etime += grid.dt
+        output_counter += grid.dt
+        #output_gif!(model, etime, grid, anim);
+
+    end
+
+    mass, te = reductions(model, grid)
+    println("d_mass: ", (mass - mass0) / mass0)
+    println("d_te:   ", (te - te0) / te0)
+
+    output(snapshots, grid, etimes)
+
+end
+
+
+
+main()
